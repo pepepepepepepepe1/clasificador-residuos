@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Clasificador de Residuos</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+</head>
+<body>
+  <h1>Clasificador de Residuos</h1>
+  <button id="connectBtn">Conectar Arduino</button>
+  <button id="startBtn">Iniciar Cámara</button>
+  <div id="webcam-container"></div>
+  <div id="label-container"></div>
+
+<script>
+const URL = "https://teachablemachine.withgoogle.com/models/8dXH5bBRS/"; // tu link de export
+let model, webcam, labelContainer, maxPredictions;
+let port, writer;
+let lastSent = "";
+let lastTime = 0;
+
+async function connectSerial() {
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 9600 });
+  writer = port.writable.getWriter();
+  alert("Arduino conectado");
+}
+
+async function sendCommand(cmd) {
+  const now = Date.now();
+  // evita mandar el mismo comando repetidamente muy rápido
+  if (cmd === lastSent && now - lastTime < 3000) return;
+  lastSent = cmd;
+  lastTime = now;
+  const data = new TextEncoder().encode(cmd + "\n");
+  await writer.write(data);
+}
+
+async function initModel() {
+  const modelURL = URL + "model.json";
+  const metadataURL = URL + "metadata.json";
+  model = await tmImage.load(modelURL, metadataURL);
+  maxPredictions = model.getTotalClasses();
+
+  webcam = new tmImage.Webcam(300, 300, true);
+  await webcam.setup();
+  await webcam.play();
+  window.requestAnimationFrame(loop);
+  document.getElementById("webcam-container").appendChild(webcam.canvas);
+
+  labelContainer = document.getElementById("label-container");
+  for (let i = 0; i < maxPredictions; i++) {
+    labelContainer.appendChild(document.createElement("div"));
+  }
+}
+
+async function loop() {
+  webcam.update();
+  await predict();
+  window.requestAnimationFrame(loop);
+}
+
+async function predict() {
+  const prediction = await model.predict(webcam.canvas);
+  let best = prediction[0];
+  for (let i = 0; i < maxPredictions; i++) {
+    const classPrediction = prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+    labelContainer.childNodes[i].innerHTML = classPrediction;
+    if (prediction[i].probability > best.probability) best = prediction[i];
+  }
+
+  // Solo actuar si hay bastante confianza
+  if (best.probability > 0.85) {
+    if (best.className === "Papel") sendCommand("P");
+    else if (best.className === "Plastico") sendCommand("L");
+    else if (best.className === "Organico") sendCommand("O");
+  }
+}
+
+document.getElementById("connectBtn").onclick = connectSerial;
+document.getElementById("startBtn").onclick = initModel;
+</script>
+</body>
+</html>
